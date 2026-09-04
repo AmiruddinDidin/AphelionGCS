@@ -1,0 +1,970 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Aphelion Ground Station — Dual Vehicle</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  :root {
+    --bg: #0e1015;
+    --panel: #12141a;
+    --panel-2: #0a0c10;
+    --border: #23262f;
+    --text: #e6e8ee;
+    --text-dim: #9aa0ab;
+    --accent-cansat: #2563eb;
+    --accent-rocket: #dc2626;
+    --accent-soft-cansat: rgba(37, 99, 235, 0.15);
+    --accent-soft-rocket: rgba(220, 38, 38, 0.15);
+    --safe: #86efac;
+    --danger: #fca5a5;
+    --mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, "Roboto Mono", monospace;
+    --sans: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+  html { width: 100%; height: 100%; }
+  body {
+    margin: 0; padding: 8px; background: var(--bg); color: var(--text);
+    font-family: var(--sans); width: 100vw; height: 100vh; overflow: hidden;
+  }
+
+  h1 { font-size: 16px; font-weight: 600; margin: 0 0 8px; }
+  
+  .header-wrapper {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 8px; gap: 8px;
+  }
+
+  .logo-section {
+    display: flex; align-items: center; gap: 12px;
+  }
+
+  .logo-section img { height: 40px; object-fit: contain; }
+
+  /* Main layout: map on left, cansat middle, rocket right */
+  .main-container {
+    display: grid; grid-template-columns: 0.8fr 2fr; gap: 10px;
+    margin-bottom: 0; height: calc(100vh - 75px);
+  }
+
+
+
+  .shared-map-container {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+    padding: 8px; display: flex; flex-direction: column;
+  }
+
+  .shared-map-title {
+    font-size: 12px; font-weight: 600; margin-bottom: 6px;
+  }
+
+  #sharedMap { flex: 1; border-radius: 8px; min-height: 200px; }
+
+  .right-panels {
+    display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; overflow: hidden; width: 100%; min-width: 0;
+  }
+
+  .side {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 10px;
+    flex: 1; display: flex; flex-direction: column; min-height: 0;
+    overflow-y: auto;
+  }
+
+  .side.cansat { border-top: 3px solid var(--accent-cansat); }
+  .side.rocket { border-top: 3px solid var(--accent-rocket); }
+
+  .sideTitle { 
+    font-size: 14px; font-weight: 700; margin-bottom: 8px; 
+    display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  }
+
+  .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+  .side.cansat .dot { background: var(--accent-cansat); }
+  .side.rocket .dot { background: var(--accent-rocket); }
+
+  .topbar { 
+    display: flex; align-items: center; gap: 6px; margin-bottom: 8px; 
+    flex-wrap: wrap; 
+  }
+
+  button {
+    background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 5px; padding: 5px 10px; cursor: pointer; font-size: 11px;
+    font-family: var(--sans); font-weight: 600;
+  }
+
+  .side.cansat button { background: var(--accent-cansat); color: white; border: none; }
+  .side.rocket button { background: var(--accent-rocket); color: white; border: none; }
+  
+  .pyro-button {
+    padding: 4px 8px; font-size: 9px; font-weight: 600;
+    border-radius: 4px; cursor: pointer; border: none;
+  }
+  
+  .pyro-drogue {
+    background: #e67e22; color: #1a0f00;
+  }
+  
+  .pyro-drogue:hover {
+    filter: brightness(1.1);
+  }
+  
+  .pyro-main {
+    background: #e74c3c; color: #1a0000;
+  }
+  
+  .pyro-main:hover {
+    filter: brightness(1.1);
+  }
+
+  button:hover { filter: brightness(1.15); }
+
+  select {
+    background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 4px; padding: 4px 6px; font-size: 11px; font-family: var(--mono);
+  }
+
+  .status { 
+    font-size: 11px; padding: 3px 8px; border-radius: 12px; 
+    font-family: var(--mono);
+  }
+
+  .status.connected { background: rgba(134, 239, 172, 0.15); color: var(--safe); }
+  .status.disconnected { background: rgba(252, 165, 165, 0.15); color: var(--danger); }
+
+  .grid { 
+    display: grid; grid-template-columns: repeat(3, 1fr); 
+    gap: 6px; margin-bottom: 8px; 
+  }
+
+  .card {
+    background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px;
+    padding: 6px 8px;
+  }
+
+  .card .label { 
+    font-size: 7px; color: var(--text-dim); text-transform: uppercase; 
+    letter-spacing: 0.03em; font-family: var(--mono);
+  }
+
+  .card .value { font-size: 13px; font-weight: 600; margin-top: 1px; font-family: var(--mono); }
+  .card .value.small { font-size: 11px; }
+
+  #cansat-map, #rocket-map { height: 200px; border-radius: 8px; margin-bottom: 12px; }
+
+  .horizonWrap { 
+    display: flex; justify-content: center; margin-bottom: 12px; 
+  }
+
+  canvas.horizon { 
+    background: var(--panel-2); 
+    border-radius: 50%; 
+    border: 1px solid var(--border);
+    width: 140px;
+    height: 140px;
+    max-width: 100%;
+  }
+
+  .gauges {
+    display: grid; grid-template-columns: 0.9fr 0.9fr 1.1fr; gap: 6px; 
+    margin-bottom: 6px; padding: 4px 0;
+  }
+
+  .gauge-box {
+    display: flex; flex-direction: column; align-items: center;
+  }
+
+  .gauge-box.horizon-box {
+    justify-content: center;
+  }
+
+  .gauge-box svg { width: 100%; max-width: 90px; }
+
+  .gauge-readout {
+    text-align: center; margin-top: -2px;
+  }
+
+  .gauge-readout .val { 
+    font-family: var(--mono); font-size: 14px; font-weight: 600;
+  }
+
+  .gauge-readout .unit { 
+    font-family: var(--mono); font-size: 8px; color: var(--text-dim); 
+  }
+
+  .gauge-readout .lbl { 
+    font-size: 8px; color: var(--text-dim); margin-top: 0px; 
+  }
+
+  .pyro-badge {
+    padding: 6px 10px; border-radius: 5px;
+    font-family: var(--mono); font-size: 10px;
+    margin-bottom: 6px; display: flex; align-items: center; justify-content: space-between;
+  }
+
+  .side.cansat .pyro-badge { 
+    background: var(--accent-soft-cansat); color: var(--safe); 
+    border: 1px solid var(--accent-cansat);
+  }
+
+  .side.rocket .pyro-badge { 
+    background: var(--accent-soft-rocket); color: var(--danger); 
+    border: 1px solid var(--accent-rocket);
+  }
+
+  .pyro-badge.fired { 
+    animation: pulse 1.1s infinite; 
+  }
+
+  @keyframes pulse { 
+    0%, 100% { opacity: 1; } 
+    50% { opacity: 0.55; } 
+  }
+
+  .pyro-badge-buttons {
+    display: flex; gap: 6px;
+  }
+
+  .chartWrap { position: relative; height: 60px; margin-bottom: 4px; }
+
+  .log {
+    height: 45px; overflow-y: auto; background: var(--panel-2); 
+    border-radius: 4px; padding: 2px; font-family: var(--mono); 
+    font-size: 7px; color: #7dd3fc; white-space: pre-wrap;
+    border: 1px solid var(--border);
+  }
+
+  .packetInfo { font-size: 9px; color: var(--text-dim); font-family: var(--mono); }
+
+  .video-section {
+    margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border);
+  }
+
+  .video-section-title {
+    font-size: 11px; margin-bottom: 4px; color: var(--text-dim);
+  }
+
+  video {
+    width: 100%; max-height: 150px; background: #000; border-radius: 6px;
+    border: 1px solid var(--border);
+  }
+
+  .side.rocket .video-section {
+    display: none;
+  }
+
+  .scale-row {
+    display: flex; align-items: center; gap: 4px; font-size: 9px; 
+    color: var(--text-dim); padding: 1px 6px; margin-bottom: 4px;
+  }
+
+  .scale-row input {
+    width: 50px; background: var(--panel-2); border: 1px solid var(--border); 
+    color: var(--text); border-radius: 3px; padding: 2px 4px; 
+    font-family: var(--mono); font-size: 9px;
+  }
+
+  .log-export-section {
+    margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border);
+  }
+
+  .log-export-info {
+    font-size: 9px; color: var(--text-dim); margin-bottom: 4px; font-family: var(--mono);
+  }
+
+  .panel-scroll {
+    flex: 1; overflow-y: auto;
+  }
+</style>
+</head>
+<body>
+
+<!-- ============== HEADER ============== -->
+<div class="header-wrapper">
+  <div class="logo-section">
+    <img src="A.png" alt="Aphelion Logo" style="height:52px; object-fit:contain;">
+    <h1 style="margin:0;">Aphelion Ground Station</h1>
+  </div>
+  <img id="ITB_LOGO" src="ITBLOGO.png" alt="ITB Logo" style="height:52px; max-width:160px; object-fit:contain;">
+</div>
+
+<!-- ============== MAIN CONTAINER: MAP LEFT, PANELS RIGHT ============== -->
+<div class="main-container">
+  <!-- LEFT: SHARED MAP -->
+  <div class="shared-map-container">
+    <div class="shared-map-title">📍 Live Position Map</div>
+    <div id="sharedMap"></div>
+  </div>
+
+  <!-- RIGHT: CANSAT AND ROCKET PANELS -->
+  <div class="right-panels">
+    <!-- ============== CANSAT PANEL ============== -->
+    <div class="side cansat">
+      <div class="sideTitle">
+        <span class="dot"></span>
+        🛰️ CanSAT
+        <span id="cansat-statusPill" class="status disconnected">Disconnected</span>
+      </div>
+      <div class="topbar">
+        <select id="cansat-baudSelect">
+          <option value="9600">9600</option>
+          <option value="19200">19200</option>
+          <option value="38400">38400</option>
+          <option value="57600" selected>57600</option>
+          <option value="115200">115200</option>
+        </select>
+        <button id="cansat-connectBtn">Connect Serial</button>
+      </div>
+
+      <div class="panel-scroll">
+        <!-- Velocity in single card -->
+        <div class="grid">
+          <div class="card">
+            <div class="label">Velocity</div>
+            <div class="value" id="cansat-valVel">0.0 m/s</div>
+          </div>
+          <div class="card">
+            <div class="label">Altitude (GPS)</div>
+            <div class="value" id="cansat-valGpsAlt">0.0 m</div>
+          </div>
+          <div class="card">
+            <div class="label">Altitude (Baro)</div>
+            <div class="value" id="cansat-valBaroAlt">0.0 m</div>
+          </div>
+          <div class="card">
+            <div class="label">Satellites</div>
+            <div class="value" id="cansat-valSats">0</div>
+          </div>
+          <div class="card">
+            <div class="label">Pressure</div>
+            <div class="value small" id="cansat-valPress">0.0 hPa</div>
+          </div>
+          <div class="card">
+            <div class="label">Temperature</div>
+            <div class="value small" id="cansat-valTemp">0.0 °C</div>
+          </div>
+        </div>
+
+        <div class="gauges">
+          <div class="gauge-box">
+            <svg width="140" height="140" viewBox="0 0 140 140" id="cansat-altGauge"></svg>
+            <div class="gauge-readout">
+              <div class="val" id="cansat-altVal">0</div>
+              <div class="unit">m</div>
+              <div class="lbl">Altitude</div>
+            </div>
+          </div>
+          <div class="gauge-box">
+            <svg width="140" height="140" viewBox="0 0 140 140" id="cansat-velGauge"></svg>
+            <div class="gauge-readout">
+              <div class="val" id="cansat-velVal">0</div>
+              <div class="unit">m/s</div>
+              <div class="lbl">Velocity</div>
+            </div>
+          </div>
+          <div class="gauge-box horizon-box">
+            <canvas class="horizon" id="cansat-horizon" width="140" height="140"></canvas>
+            <div class="gauge-readout">
+              <div class="lbl">Attitude</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="chartWrap">
+          <canvas id="cansat-altChart"></canvas>
+        </div>
+
+        <!-- Data Log -->
+        <div style="display: flex; flex-direction: column; margin-bottom: 12px;">
+          <div style="font-size: 11px; color: var(--text-dim); margin-bottom: 6px; font-family: var(--mono);">Live Data Log</div>
+          <div class="log" id="cansat-log"></div>
+          <div class="packetInfo" id="cansat-packetInfo">0 pkts, waiting...</div>
+        </div>
+
+        <!-- Export Section -->
+        <div class="log-export-section">
+          <div class="log-export-info" id="cansat-exportInfo">0 packets buffered</div>
+          <button style="width: 100%;" id="cansat-exportBtn">Export Flight Data (Excel)</button>
+        </div>
+
+        <!-- Video -->
+        <div class="video-section">
+          <div class="video-section-title">CanSAT Video Feed</div>
+          <select id="cansat-videoDeviceSelect" style="width: 100%; margin-bottom: 8px;">
+            <option>Select camera</option>
+          </select>
+          <button id="cansat-videoEnableBtn" style="width: 100%; margin-bottom: 8px;">Enable Cameras</button>
+          <video id="cansat-fpvVideo" playsinline autoplay muted></video>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============== ROCKET PANEL ============== -->
+    <div class="side rocket">
+      <div class="sideTitle">
+        <span class="dot"></span>
+        🚀 Rocket
+        <span id="rocket-statusPill" class="status disconnected">Disconnected</span>
+      </div>
+      <div class="topbar">
+        <select id="rocket-baudSelect">
+          <option value="9600">9600</option>
+          <option value="19200">19200</option>
+          <option value="38400">38400</option>
+          <option value="57600" selected>57600</option>
+          <option value="115200">115200</option>
+        </select>
+        <button id="rocket-connectBtn">Connect Serial</button>
+      </div>
+
+      <div class="panel-scroll">
+        <!-- Velocity in single card -->
+        <div class="grid">
+          <div class="card">
+            <div class="label">Velocity</div>
+            <div class="value" id="rocket-valVel">0.0 m/s</div>
+          </div>
+          <div class="card">
+            <div class="label">Altitude (GPS)</div>
+            <div class="value" id="rocket-valGpsAlt">0.0 m</div>
+          </div>
+          <div class="card">
+            <div class="label">Altitude (Baro)</div>
+            <div class="value" id="rocket-valBaroAlt">0.0 m</div>
+          </div>
+          <div class="card">
+            <div class="label">Satellites</div>
+            <div class="value" id="rocket-valSats">0</div>
+          </div>
+          <div class="card">
+            <div class="label">Pressure</div>
+            <div class="value small" id="rocket-valPress">0.0 hPa</div>
+          </div>
+          <div class="card">
+            <div class="label">Temperature</div>
+            <div class="value small" id="rocket-valTemp">0.0 °C</div>
+          </div>
+        </div>
+
+        <!-- PYRO Badge with Fire Buttons on Right -->
+        <div class="pyro-badge" id="rocket-pyroBadge">
+          <span id="rocket-pyroText">PYRO — Safe</span>
+          <div class="pyro-badge-buttons">
+            <button class="pyro-button pyro-drogue" id="rocket-fireDrogueBtn">Fire Drogue</button>
+            <button class="pyro-button pyro-main" id="rocket-fireMainBtn">Fire Main</button>
+          </div>
+        </div>
+
+        <div class="gauges">
+          <div class="gauge-box">
+            <svg width="140" height="140" viewBox="0 0 140 140" id="rocket-altGauge"></svg>
+            <div class="gauge-readout">
+              <div class="val" id="rocket-altVal">0</div>
+              <div class="unit">m</div>
+              <div class="lbl">Altitude</div>
+            </div>
+          </div>
+          <div class="gauge-box">
+            <svg width="140" height="140" viewBox="0 0 140 140" id="rocket-velGauge"></svg>
+            <div class="gauge-readout">
+              <div class="val" id="rocket-velVal">0</div>
+              <div class="unit">m/s</div>
+              <div class="lbl">Velocity</div>
+            </div>
+          </div>
+          <div class="gauge-box horizon-box">
+            <canvas class="horizon" id="rocket-horizon" width="140" height="140"></canvas>
+            <div class="gauge-readout">
+              <div class="lbl">Attitude</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="chartWrap">
+          <canvas id="rocket-altChart"></canvas>
+        </div>
+
+        <!-- Data Log -->
+        <div style="display: flex; flex-direction: column; margin-bottom: 12px;">
+          <div style="font-size: 11px; color: var(--text-dim); margin-bottom: 6px; font-family: var(--mono);">Live Data Log</div>
+          <div class="log" id="rocket-log"></div>
+          <div class="packetInfo" id="rocket-packetInfo">0 pkts, waiting...</div>
+        </div>
+
+        <!-- Export Section -->
+        <div class="log-export-section">
+          <div class="log-export-info" id="rocket-exportInfo">0 packets buffered</div>
+          <button style="width: 100%;" id="rocket-exportBtn">Export Flight Data (Excel)</button>
+        </div>
+
+        <!-- Video -->
+        <div class="video-section">
+          <div class="video-section-title">Rocket Video Feed</div>
+          <select id="rocket-videoDeviceSelect" style="width: 100%; margin-bottom: 8px;">
+            <option>Select camera</option>
+          </select>
+          <button id="rocket-videoEnableBtn" style="width: 100%; margin-bottom: 8px;">Enable Cameras</button>
+          <video id="rocket-fpvVideo" playsinline autoplay muted></video>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/SheetJS/0.18.5/xlsx.full.min.js"></script>
+<script>
+  // ============== EXCEL EXPORT ==============
+  function exportFlightDataToExcel(prefix, flightData) {
+    if (!window.XLSX) {
+      alert('SheetJS library not loaded');
+      return;
+    }
+    
+    const ws = XLSX.utils.json_to_sheet(flightData);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Flight Data');
+    const filename = `${prefix}_flight_data_${new Date().toISOString().split('T')[0]}.xlsx`;
+    XLSX.writeFile(wb, filename);
+  }
+
+  // ============== GAUGE BUILDER ==============
+  function buildGauge(container, label, unit, min, max, decimals) {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('width', '140');
+    svg.setAttribute('height', '140');
+    svg.setAttribute('viewBox', '0 0 140 140');
+    container.appendChild(svg);
+
+    let currentValue = min;
+
+    function drawGauge(value) {
+      currentValue = Math.max(min, Math.min(max, value));
+      svg.innerHTML = '';
+      const cx = 70, cy = 70, r = 60;
+      const startAngle = Math.PI * 0.75;
+      const endAngle = Math.PI * 2.25;
+      const angle = startAngle + (endAngle - startAngle) * ((currentValue - min) / (max - min));
+
+      // Background arc
+      const arcPath = (angle) => {
+        const x = cx + r * Math.cos(angle);
+        const y = cy + r * Math.sin(angle);
+        return `M ${cx + r * Math.cos(startAngle)} ${cy + r * Math.sin(startAngle)} A ${r} ${r} 0 ${angle > startAngle + Math.PI ? 1 : 0} 1 ${x} ${y}`;
+      };
+
+      const bgArc = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      bgArc.setAttribute('d', arcPath(endAngle));
+      bgArc.setAttribute('stroke', '#23262f');
+      bgArc.setAttribute('stroke-width', '6');
+      bgArc.setAttribute('fill', 'none');
+      svg.appendChild(bgArc);
+
+      const fgArc = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      fgArc.setAttribute('d', arcPath(angle));
+      fgArc.setAttribute('stroke', label === 'Vel' ? '#2563eb' : '#dc2626');
+      fgArc.setAttribute('stroke-width', '6');
+      fgArc.setAttribute('fill', 'none');
+      svg.appendChild(fgArc);
+
+      const needle = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+      needle.setAttribute('x1', cx);
+      needle.setAttribute('y1', cy);
+      needle.setAttribute('x2', cx + 45 * Math.cos(angle));
+      needle.setAttribute('y2', cy + 45 * Math.sin(angle));
+      needle.setAttribute('stroke', '#e6e8ee');
+      needle.setAttribute('stroke-width', '2');
+      svg.appendChild(needle);
+
+      const center = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      center.setAttribute('cx', cx);
+      center.setAttribute('cy', cy);
+      center.setAttribute('r', '4');
+      center.setAttribute('fill', '#e6e8ee');
+      svg.appendChild(center);
+    }
+
+    drawGauge(min);
+    return {
+      update: (value) => drawGauge(value),
+      setScale: (newMin, newMax) => { min = newMin; max = newMax; drawGauge(currentValue); }
+    };
+  }
+
+  // ============== CREATE DASHBOARD ==============
+  function createDashboard(prefix, accentColor, emoji, type) {
+    const els = {
+      statusPill: document.getElementById(`${prefix}-statusPill`),
+      connectBtn: document.getElementById(`${prefix}-connectBtn`),
+      baudSelect: document.getElementById(`${prefix}-baudSelect`),
+      valGpsAlt: document.getElementById(`${prefix}-valGpsAlt`),
+      valBaroAlt: document.getElementById(`${prefix}-valBaroAlt`),
+      valSats: document.getElementById(`${prefix}-valSats`),
+      valPress: document.getElementById(`${prefix}-valPress`),
+      valTemp: document.getElementById(`${prefix}-valTemp`),
+      valVel: document.getElementById(`${prefix}-valVel`),
+      valAttitude: document.querySelector(`#${prefix}-sideTitle .attitude`),
+      log: document.getElementById(`${prefix}-log`),
+      packetInfo: document.getElementById(`${prefix}-packetInfo`),
+      horizon: document.getElementById(`${prefix}-horizon`),
+      gaugesContainer: {
+        innerHTML: '', 
+        appendChild: (el) => {
+          if (!this.gaugeParent) {
+            this.gaugeParent = document.createElement('div');
+            this.gaugeParent.className = 'gauges';
+            document.querySelector(`.side.${prefix} .panel-scroll`).insertBefore(this.gaugeParent, document.querySelector(`.side.${prefix} .horizonWrap`));
+          }
+          this.gaugeParent.appendChild(el);
+        }
+      },
+      altVal: document.getElementById(`${prefix}-altVal`),
+      velVal: document.getElementById(`${prefix}-velVal`),
+      altGauge: document.getElementById(`${prefix}-altGauge`),
+      velGauge: document.getElementById(`${prefix}-velGauge`)
+    };
+
+    if (prefix === 'rocket') {
+      els.pyroBadge = document.getElementById('rocket-pyroBadge');
+      els.pyroText = document.getElementById('rocket-pyroText');
+      els.fireDrogueBtn = document.getElementById('rocket-fireDrogueBtn');
+      els.fireMainBtn = document.getElementById('rocket-fireMainBtn');
+    }
+
+    let port = null, reader = null, keepReading = false;
+    let packetCount = 0, lastPacketTime = 0;
+    let flightData = [];
+    let maxAlt = 0;
+
+    const altChart = new Chart(document.getElementById(`${prefix}-altChart`), {
+      type: 'line',
+      data: {
+        labels: [],
+        datasets: [
+          { label: 'GPS Alt', data: [], borderColor: accentColor + 'cc', backgroundColor: accentColor + '22', borderWidth: 2, fill: true, pointRadius: 0, tension: 0.2 },
+          { label: 'Baro Alt', data: [], borderColor: accentColor + 'aa', borderDash: [4, 4], backgroundColor: 'transparent', borderWidth: 1.5, fill: false, pointRadius: 0, tension: 0.2 }
+        ]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false, animation: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          y: { min: 0, ticks: { color: '#9aa0ab', font: { size: 10 } }, grid: { color: '#1a212c', drawBorder: false } },
+          x: { ticks: { color: '#9aa0ab', font: { size: 10 } }, grid: { color: '#1a212c' } }
+        }
+      }
+    });
+
+    const altGauge = buildGauge(els.altGauge, 'Alt', 'm', 0, 2000, 0);
+    const velGauge = buildGauge(els.velGauge, 'Vel', 'm/s', -50, 150, 1);
+
+    function drawHorizon(rollDeg, pitchDeg) {
+      const c = els.horizon, g = c.getContext('2d');
+      const w = c.width, h = c.height, cx = w / 2, cy = h / 2, r = 85;
+      g.clearRect(0, 0, w, h);
+      g.save();
+      g.beginPath(); g.arc(cx, cy, r, 0, Math.PI * 2); g.clip();
+      g.save();
+      g.translate(cx, cy);
+      g.rotate(rollDeg * Math.PI / 180);
+      const pitchOffset = pitchDeg * 2;
+      g.fillStyle = '#3b82f6';
+      g.fillRect(-r * 2, -r * 2 + pitchOffset, r * 4, r * 2);
+      g.fillStyle = '#8a5a2c';
+      g.fillRect(-r * 2, pitchOffset, r * 4, r * 2);
+      g.strokeStyle = '#ffffff'; g.lineWidth = 2;
+      g.beginPath(); g.moveTo(-r * 2, pitchOffset); g.lineTo(r * 2, pitchOffset); g.stroke();
+      g.restore();
+      g.restore();
+      g.strokeStyle = '#e6e8ee'; g.lineWidth = 2;
+      g.beginPath(); g.arc(cx, cy, r, 0, Math.PI * 2); g.stroke();
+      g.strokeStyle = '#facc15'; g.lineWidth = 2;
+      g.beginPath(); g.moveTo(cx - 22, cy); g.lineTo(cx - 6, cy); g.stroke();
+      g.beginPath(); g.moveTo(cx + 6, cy); g.lineTo(cx + 22, cy); g.stroke();
+    }
+    drawHorizon(0, 0);
+
+    function log(line) {
+      els.log.textContent += line + "\n";
+      els.log.scrollTop = els.log.scrollHeight;
+    }
+
+    function parsePacket(line) {
+      line = line.trim();
+      if (!line.startsWith('$TLM,')) return;
+      const parts = line.split(',');
+      if (parts.length < 19) return;
+
+      const [, ms, lat, lon, gpsAlt, sats, pressHpa, baroAlt, baroTemp, roll, pitch, yaw, velocity] = parts;
+
+      const flat = parseFloat(lat), flon = parseFloat(lon);
+      const numGpsAlt = parseFloat(gpsAlt);
+      const numBaroAlt = parseFloat(baroAlt);
+      const numRoll = parseFloat(roll);
+      const numPitch = parseFloat(pitch);
+      const numYaw = parseFloat(yaw);
+      const numVel = parseFloat(velocity) || 0;
+
+      flightData.push({
+        timestamp_ms: parseFloat(ms),
+        timestamp_sec: (parseFloat(ms) / 1000).toFixed(3),
+        latitude: flat,
+        longitude: flon,
+        gps_altitude_m: numGpsAlt.toFixed(3),
+        baro_altitude_m: numBaroAlt.toFixed(3),
+        num_satellites: parseInt(sats),
+        pressure_hpa: parseFloat(pressHpa).toFixed(2),
+        temperature_c: parseFloat(baroTemp).toFixed(2),
+        roll_deg: numRoll.toFixed(2),
+        pitch_deg: numPitch.toFixed(2),
+        yaw_deg: numYaw.toFixed(2),
+        velocity_ms: numVel.toFixed(2),
+        raw_line: line
+      });
+      
+      document.getElementById(`${prefix}-exportInfo`).textContent = `${flightData.length} packets buffered`;
+
+      els.valGpsAlt.textContent = numGpsAlt.toFixed(1) + ' m';
+      els.valBaroAlt.textContent = numBaroAlt.toFixed(1) + ' m';
+      els.valSats.textContent = sats;
+      els.valPress.textContent = parseFloat(pressHpa).toFixed(1) + ' hPa';
+      els.valTemp.textContent = parseFloat(baroTemp).toFixed(1) + ' °C';
+      els.valVel.textContent = numVel.toFixed(1) + ' m/s';
+
+      altGauge.update(numGpsAlt);
+      velGauge.update(numVel);
+
+      if (numGpsAlt > maxAlt) maxAlt = numGpsAlt;
+
+      drawHorizon(numRoll, numPitch);
+
+      // Update map with GPS position
+      if (flat !== 0 && flon !== 0) {
+        if (prefix === 'cansat') {
+          if (!cansatMarker) {
+            cansatMarker = L.marker([flat, flon], { icon: cansatIcon }).addTo(sharedMap).bindPopup('🛰️ CanSAT');
+            cansatPolyline = L.polyline(cansatTrail, { color: '#2563eb', weight: 2, opacity: 0.7 }).addTo(sharedMap);
+          } else {
+            cansatMarker.setLatLng([flat, flon]);
+          }
+          cansatTrail.push([flat, flon]);
+          cansatPolyline.setLatLngs(cansatTrail);
+          if (cansatTrail.length === 1) sharedMap.setView([flat, flon], 16);
+        } else if (prefix === 'rocket') {
+          if (!rocketMarker) {
+            rocketMarker = L.marker([flat, flon], { icon: rocketIcon }).addTo(sharedMap).bindPopup('🚀 Rocket');
+            rocketPolyline = L.polyline(rocketTrail, { color: '#dc2626', weight: 2, opacity: 0.7 }).addTo(sharedMap);
+          } else {
+            rocketMarker.setLatLng([flat, flon]);
+          }
+          rocketTrail.push([flat, flon]);
+          rocketPolyline.setLatLngs(rocketTrail);
+          if (rocketTrail.length === 1 && !cansatTrail.length) sharedMap.setView([flat, flon], 16);
+        }
+      }
+
+      const tSec = (parseFloat(ms) / 1000).toFixed(1);
+      altChart.data.labels.push(tSec);
+      altChart.data.datasets[0].data.push(numGpsAlt);
+      altChart.data.datasets[1].data.push(numBaroAlt);
+      if (altChart.data.labels.length > 100) {
+        altChart.data.labels.shift();
+        altChart.data.datasets[0].data.shift();
+        altChart.data.datasets[1].data.shift();
+      }
+      altChart.update('none');
+
+      packetCount++;
+      lastPacketTime = Date.now();
+      log(line);
+    }
+
+    async function connect() {
+      if (!('serial' in navigator)) {
+        alert('Web Serial not supported. Use Chrome or Edge desktop.');
+        return;
+      }
+      try {
+        port = await navigator.serial.requestPort();
+        const baud = parseInt(els.baudSelect.value, 10);
+        await port.open({ baudRate: baud });
+        els.statusPill.textContent = 'Connected';
+        els.statusPill.className = 'status connected';
+        els.connectBtn.textContent = 'Disconnect';
+        keepReading = true;
+        readLoop();
+      } catch (err) {
+        log('Connection error: ' + err.message);
+      }
+    }
+
+    async function disconnect() {
+      keepReading = false;
+      if (reader) { try { await reader.cancel(); } catch (e) { } }
+      if (port) { try { await port.close(); } catch (e) { } }
+      els.statusPill.textContent = 'Disconnected';
+      els.statusPill.className = 'status disconnected';
+      els.connectBtn.textContent = 'Connect Serial';
+    }
+
+    async function readLoop() {
+      const textDecoder = new TextDecoderStream();
+      port.readable.pipeTo(textDecoder.writable);
+      reader = textDecoder.readable.getReader();
+      let buffer = '';
+      try {
+        while (keepReading) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += value;
+          let idx;
+          while ((idx = buffer.indexOf('\n')) >= 0) {
+            const line = buffer.slice(0, idx);
+            buffer = buffer.slice(idx + 1);
+            parsePacket(line);
+          }
+        }
+      } catch (err) {
+        log('Read error: ' + err.message);
+      } finally {
+        reader.releaseLock();
+      }
+    }
+
+    els.connectBtn.addEventListener('click', () => {
+      if (els.connectBtn.textContent.includes('Connect')) connect();
+      else disconnect();
+    });
+
+    document.getElementById(`${prefix}-exportBtn`).addEventListener('click', () => {
+      exportFlightDataToExcel(prefix, flightData);
+    });
+
+    setInterval(() => {
+      if (lastPacketTime > 0) {
+        const age = ((Date.now() - lastPacketTime) / 1000).toFixed(1);
+        els.packetInfo.textContent = `${packetCount} pkts, last ${age}s ago`;
+      }
+    }, 500);
+
+    // Pyro handlers for rocket
+    if (prefix === 'rocket') {
+      const FIRE_PIN = '7788';
+      
+      async function sendCommand(cmd) {
+        if (!port) { alert('Connect via USB first!'); return; }
+        try {
+          const encoder = new TextEncoder();
+          await port.writable.getWriter().write(encoder.encode(cmd + '\n'));
+          log('SENT: ' + cmd);
+        } catch (err) {
+          log('command send failed: ' + err.message);
+        }
+      }
+
+      function firePyro(type) {
+        const pin = prompt('DANGER: enter PIN to authorize ' + type.toUpperCase() + ' fire');
+        if (pin === null) return;
+        if (pin !== FIRE_PIN) { alert('Wrong PIN — cancelled.'); return; }
+        if (!confirm('Really fire ' + type.toUpperCase() + ' now?')) return;
+        const cmd = type === 'drogue' ? 'CMD,FIRE_DROGUE,7788' : 'CMD,FIRE_MAIN,7788';
+        sendCommand(cmd);
+      }
+
+      els.fireDrogueBtn.addEventListener('click', () => firePyro('drogue'));
+      els.fireMainBtn.addEventListener('click', () => firePyro('main'));
+    }
+  }
+
+  // Initialize dashboards
+  createDashboard('cansat', '#2563eb', '🛰️', 'cansat');
+  createDashboard('rocket', '#dc2626', '🚀', 'rocket');
+
+  // ============== SHARED MAP ============== 
+  let sharedMap = L.map('sharedMap').setView([0, 0], 3);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© OpenStreetMap contributors',
+    maxZoom: 19
+  }).addTo(sharedMap);
+
+  // Map markers and trails
+  let cansatMarker = null, rocketMarker = null;
+  let cansatTrail = [], rocketTrail = [];
+  let cansatPolyline = null, rocketPolyline = null;
+
+  // Create custom satellite icon for CanSAT
+  const cansatIcon = L.divIcon({
+    html: `<div style="font-size: 24px; text-shadow: 0 0 4px rgba(0,0,0,0.8);">🛰️</div>`,
+    iconSize: [30, 30],
+    iconAnchor: [15, 15],
+    popupAnchor: [0, -15]
+  });
+
+  // Create custom rocket icon for Rocket
+  const rocketIcon = L.divIcon({
+    html: `<div style="font-size: 24px; text-shadow: 0 0 4px rgba(0,0,0,0.8);">🚀</div>`,
+    iconSize: [30, 30],
+    iconAnchor: [15, 15],
+    popupAnchor: [0, -15]
+  });
+
+  // ============== VIDEO HANDLING ==============
+  let cansatVideoStream = null, rocketVideoStream = null;
+
+  async function enableVideoList(prefix) {
+    try {
+      const tempStream = await navigator.mediaDevices.getUserMedia({ video: true });
+      tempStream.getTracks().forEach(t => t.stop());
+
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const videoInputs = devices.filter(d => d.kind === 'videoinput');
+
+      const select = document.getElementById(`${prefix}-videoDeviceSelect`);
+      select.innerHTML = '';
+      if (videoInputs.length === 0) {
+        select.innerHTML = '<option>No video devices found</option>';
+        return;
+      }
+      videoInputs.forEach((d, i) => {
+        const opt = document.createElement('option');
+        opt.value = d.deviceId;
+        opt.textContent = d.label || `Camera ${i + 1}`;
+        select.appendChild(opt);
+      });
+
+      startVideo(prefix, select.value);
+    } catch (err) {
+      console.error('Video error:', err.message);
+    }
+  }
+
+  async function startVideo(prefix, deviceId) {
+    const videoElement = document.getElementById(`${prefix}-fpvVideo`);
+    const streamVar = prefix === 'cansat' ? 'cansatVideoStream' : 'rocketVideoStream';
+    const currentStream = window[streamVar];
+    
+    if (currentStream) {
+      currentStream.getTracks().forEach(t => t.stop());
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { deviceId: deviceId ? { exact: deviceId } : undefined }
+      });
+      videoElement.srcObject = stream;
+      window[streamVar] = stream;
+    } catch (err) {
+      console.error('Video start error:', err.message);
+    }
+  }
+
+  document.getElementById('cansat-videoEnableBtn').addEventListener('click', () => enableVideoList('cansat'));
+  document.getElementById('rocket-videoEnableBtn').addEventListener('click', () => enableVideoList('rocket'));
+  document.getElementById('cansat-videoDeviceSelect').addEventListener('change', (e) => startVideo('cansat', e.target.value));
+  document.getElementById('rocket-videoDeviceSelect').addEventListener('change', (e) => startVideo('rocket', e.target.value));
+</script>
+
+</body>
+</html>
