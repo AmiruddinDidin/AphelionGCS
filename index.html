@@ -694,6 +694,13 @@
 
     function parsePacket(line) {
       line = line.trim();
+      
+      // Handle GCS Bridge diagnostic/acknowledgment messages
+      if (line.startsWith('[GCS')) {
+        log(line);  // Log for debugging
+        return;
+      }
+      
       if (!line.startsWith('$TLM,')) return;
       const parts = line.split(',');
       if (parts.length < 19) return;
@@ -862,6 +869,9 @@
           await writer.write(encoder.encode(cmd + '\n'));
           writer.releaseLock();
           log('SENT: ' + cmd);
+          
+          // Give bridge time to acknowledge
+          await new Promise(r => setTimeout(r, 100));
         } catch (err) {
           log('command send failed: ' + err.message);
         }
