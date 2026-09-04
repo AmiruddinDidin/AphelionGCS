@@ -812,7 +812,7 @@
 
     async function readLoop() {
       const textDecoder = new TextDecoderStream();
-      port.readable.pipeTo(textDecoder.writable);
+      const readableClosed = port.readable.pipeTo(textDecoder.writable);
       reader = textDecoder.readable.getReader();
       let buffer = '';
       try {
@@ -858,7 +858,9 @@
         if (!port) { alert('Connect via USB first!'); return; }
         try {
           const encoder = new TextEncoder();
-          await port.writable.getWriter().write(encoder.encode(cmd + '\n'));
+          const writer = port.writable.getWriter();
+          await writer.write(encoder.encode(cmd + '\n'));
+          writer.releaseLock();
           log('SENT: ' + cmd);
         } catch (err) {
           log('command send failed: ' + err.message);
