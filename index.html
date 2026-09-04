@@ -388,7 +388,7 @@
         <!-- Export Section -->
         <div class="log-export-section">
           <div class="log-export-info" id="cansat-exportInfo">0 packets buffered</div>
-          <button style="width: 100%;" id="cansat-exportBtn">Export Flight Data (Excel)</button>
+          <button style="width: 100%;" id="cansat-exportBtn">Export Flight Data (Excel CSV)</button>
         </div>
 
         <!-- Video -->
@@ -498,7 +498,7 @@
         <!-- Export Section -->
         <div class="log-export-section">
           <div class="log-export-info" id="rocket-exportInfo">0 packets buffered</div>
-          <button style="width: 100%;" id="rocket-exportBtn">Export Flight Data (Excel)</button>
+          <button style="width: 100%;" id="rocket-exportBtn">Export Flight Data (Excel CSV)</button>
         </div>
 
         <!-- Video -->
@@ -515,20 +515,37 @@
   </div>
 </div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/SheetJS/0.18.5/xlsx.full.min.js"></script>
 <script>
-  // ============== EXCEL EXPORT ==============
+  // ============== EXCEL-COMPATIBLE TELEMETRY EXPORT ==============
+  // No external library is required. CSV files open directly in Excel.
   function exportFlightDataToExcel(prefix, flightData) {
-    if (!window.XLSX) {
-      alert('SheetJS library not loaded');
+    if (!flightData || flightData.length === 0) {
+      alert('No telemetry data to export yet.');
       return;
     }
-    
-    const ws = XLSX.utils.json_to_sheet(flightData);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Flight Data');
-    const filename = `${prefix}_flight_data_${new Date().toISOString().split('T')[0]}.xlsx`;
-    XLSX.writeFile(wb, filename);
+
+    const headers = Object.keys(flightData[0]);
+    const csvEscape = (value) => {
+      if (value === null || value === undefined) return '';
+      const text = String(value);
+      return /[\",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+    };
+
+    // UTF-8 BOM makes Indonesian/Excel installations detect UTF-8 correctly.
+    const csv = '\uFEFF' + [
+      headers.map(csvEscape).join(','),
+      ...flightData.map(row => headers.map(h => csvEscape(row[h])).join(','))
+    ].join('\r\n');
+
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${prefix}_telemetry_${new Date().toISOString().replace(/[:.]/g, '-').split('T')[0]}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
   }
 
   // ============== GAUGE BUILDER ==============
@@ -638,6 +655,8 @@
     let packetCount = 0, lastPacketTime = 0;
     let flightData = [];
     let maxAlt = 0;
+    let lastTelemetryMs = null;
+    let lastTelemetryGpsAlt = null;
 
     const altChart = new Chart(document.getElementById(`${prefix}-altChart`), {
       type: 'line',
@@ -694,94 +713,198 @@
 
     function parsePacket(line) {
       line = line.trim();
-      
+
       // Handle GCS Bridge diagnostic/acknowledgment messages
       if (line.startsWith('[GCS')) {
-        log(line);  // Log for debugging
+        log(line);
         return;
       }
-      
-      if (!line.startsWith('$TLM,')) return;
+
+      /*
+       * Two telemetry formats are supported:
+       *
+       * CanSAT:
+       * $TLM,millis,lat,lon,gpsAlt,sats,pressHpa,baroAlt,baroTemp,
+       *     roll,pitch,yaw,velocity,...
+       *
+       * Rocket:
+       * $R,millis,lat,lon,gpsAlt,sats,pressHpa,baroAlt,baroTemp,
+       *    roll,pitch,yaw,ax,ay,az,calSys,calGyro,calAcc,calMag
+       *
+       * IMPORTANT:
+       * - CanSAT only accepts $TLM
+       * - Rocket only accepts $R
+       * This prevents packets from one vehicle appearing in the other panel.
+       */
+      const isCanSatPacket = line.startsWith('$TLM,');
+      const isRocketPacket = line.startsWith('$R,');
+
+      if (prefix === 'cansat' && !isCanSatPacket) return;
+      if (prefix === 'rocket' && !isRocketPacket) return;
+
       const parts = line.split(',');
-      if (parts.length < 19) return;
 
-      const [, ms, lat, lon, gpsAlt, sats, pressHpa, baroAlt, baroTemp, roll, pitch, yaw, velocity] = parts;
+      let ms, lat, lon, gpsAlt, sats, pressHpa, baroAlt, baroTemp;
+      let roll, pitch, yaw, velocity = 0;
+      let ax = 0, ay = 0, az = 0;
+      let calSys = 0, calGyro = 0, calAcc = 0, calMag = 0;
 
-      const flat = parseFloat(lat), flon = parseFloat(lon);
+      if (isCanSatPacket) {
+        // $TLM + at least the fields currently used by the CanSAT dashboard
+        if (parts.length < 13) return;
+
+        [, ms, lat, lon, gpsAlt, sats, pressHpa, baroAlt, baroTemp,
+          roll, pitch, yaw, velocity] = parts;
+
+      } else if (isRocketPacket) {
+        // $R + 18 telemetry fields:
+        // millis,lat,lon,gpsAlt,sats,pressHpa,baroAlt,baroTemp,
+        // roll,pitch,yaw,ax,ay,az,calSys,calGyro,calAcc,calMag
+        if (parts.length < 19) return;
+
+        [, ms, lat, lon, gpsAlt, sats, pressHpa, baroAlt, baroTemp,
+          roll, pitch, yaw, ax, ay, az, calSys, calGyro, calAcc, calMag] = parts;
+      } else {
+        return;
+      }
+
+      const numMs = parseFloat(ms);
+      const flat = parseFloat(lat);
+      const flon = parseFloat(lon);
       const numGpsAlt = parseFloat(gpsAlt);
       const numBaroAlt = parseFloat(baroAlt);
       const numRoll = parseFloat(roll);
       const numPitch = parseFloat(pitch);
       const numYaw = parseFloat(yaw);
-      const numVel = parseFloat(velocity) || 0;
+
+      let numVel = parseFloat(velocity);
+      if (!Number.isFinite(numVel)) numVel = 0;
+
+      // Rocket packets do not contain a velocity field.
+      // Estimate vertical velocity from GPS altitude changes so the
+      // existing Rocket velocity display/gauge can still work.
+      if (isRocketPacket) {
+        if (
+          Number.isFinite(numMs) &&
+          Number.isFinite(numGpsAlt) &&
+          Number.isFinite(lastTelemetryMs) &&
+          Number.isFinite(lastTelemetryGpsAlt) &&
+          numMs > lastTelemetryMs
+        ) {
+          const dt = (numMs - lastTelemetryMs) / 1000;
+          if (dt > 0 && dt < 10) {
+            numVel = (numGpsAlt - lastTelemetryGpsAlt) / dt;
+          }
+        }
+
+        lastTelemetryMs = numMs;
+        lastTelemetryGpsAlt = numGpsAlt;
+      }
 
       flightData.push({
-        timestamp_ms: parseFloat(ms),
-        timestamp_sec: (parseFloat(ms) / 1000).toFixed(3),
+        packet_type: isCanSatPacket ? 'TLM' : 'R',
+        timestamp_ms: numMs,
+        timestamp_sec: (numMs / 1000).toFixed(3),
         latitude: flat,
         longitude: flon,
-        gps_altitude_m: numGpsAlt.toFixed(3),
-        baro_altitude_m: numBaroAlt.toFixed(3),
+        gps_altitude_m: Number.isFinite(numGpsAlt) ? numGpsAlt.toFixed(3) : '',
+        baro_altitude_m: Number.isFinite(numBaroAlt) ? numBaroAlt.toFixed(3) : '',
         num_satellites: parseInt(sats),
-        pressure_hpa: parseFloat(pressHpa).toFixed(2),
-        temperature_c: parseFloat(baroTemp).toFixed(2),
-        roll_deg: numRoll.toFixed(2),
-        pitch_deg: numPitch.toFixed(2),
-        yaw_deg: numYaw.toFixed(2),
+        pressure_hpa: Number.isFinite(parseFloat(pressHpa)) ? parseFloat(pressHpa).toFixed(2) : '',
+        temperature_c: Number.isFinite(parseFloat(baroTemp)) ? parseFloat(baroTemp).toFixed(2) : '',
+        roll_deg: Number.isFinite(numRoll) ? numRoll.toFixed(2) : '',
+        pitch_deg: Number.isFinite(numPitch) ? numPitch.toFixed(2) : '',
+        yaw_deg: Number.isFinite(numYaw) ? numYaw.toFixed(2) : '',
         velocity_ms: numVel.toFixed(2),
+        ax: isRocketPacket ? parseFloat(ax) : '',
+        ay: isRocketPacket ? parseFloat(ay) : '',
+        az: isRocketPacket ? parseFloat(az) : '',
+        calSys: isRocketPacket ? parseInt(calSys) : '',
+        calGyro: isRocketPacket ? parseInt(calGyro) : '',
+        calAcc: isRocketPacket ? parseInt(calAcc) : '',
+        calMag: isRocketPacket ? parseInt(calMag) : '',
         raw_line: line
       });
-      
-      document.getElementById(`${prefix}-exportInfo`).textContent = `${flightData.length} packets buffered`;
 
-      els.valGpsAlt.textContent = numGpsAlt.toFixed(1) + ' m';
-      els.valBaroAlt.textContent = numBaroAlt.toFixed(1) + ' m';
+      document.getElementById(`${prefix}-exportInfo`).textContent =
+        `${flightData.length} packets buffered`;
+
+      els.valGpsAlt.textContent =
+        (Number.isFinite(numGpsAlt) ? numGpsAlt.toFixed(1) : '0.0') + ' m';
+      els.valBaroAlt.textContent =
+        (Number.isFinite(numBaroAlt) ? numBaroAlt.toFixed(1) : '0.0') + ' m';
       els.valSats.textContent = sats;
-      els.valPress.textContent = parseFloat(pressHpa).toFixed(1) + ' hPa';
-      els.valTemp.textContent = parseFloat(baroTemp).toFixed(1) + ' °C';
+      els.valPress.textContent =
+        (Number.isFinite(parseFloat(pressHpa)) ? parseFloat(pressHpa).toFixed(1) : '0.0') + ' hPa';
+      els.valTemp.textContent =
+        (Number.isFinite(parseFloat(baroTemp)) ? parseFloat(baroTemp).toFixed(1) : '0.0') + ' °C';
       els.valVel.textContent = numVel.toFixed(1) + ' m/s';
 
-      altGauge.update(numGpsAlt);
+      altGauge.update(Number.isFinite(numGpsAlt) ? numGpsAlt : 0);
       velGauge.update(numVel);
 
-      if (numGpsAlt > maxAlt) maxAlt = numGpsAlt;
+      if (Number.isFinite(numGpsAlt) && numGpsAlt > maxAlt) maxAlt = numGpsAlt;
 
-      drawHorizon(numRoll, numPitch);
+      drawHorizon(
+        Number.isFinite(numRoll) ? numRoll : 0,
+        Number.isFinite(numPitch) ? numPitch : 0
+      );
 
       // Update map with GPS position
-      if (flat !== 0 && flon !== 0) {
+      if (Number.isFinite(flat) && Number.isFinite(flon) && flat !== 0 && flon !== 0) {
         if (prefix === 'cansat') {
           if (!cansatMarker) {
-            cansatMarker = L.marker([flat, flon], { icon: cansatIcon }).addTo(sharedMap).bindPopup('🛰️ CanSAT');
-            cansatPolyline = L.polyline(cansatTrail, { color: '#2563eb', weight: 2, opacity: 0.7 }).addTo(sharedMap);
+            cansatMarker = L.marker([flat, flon], { icon: cansatIcon })
+              .addTo(sharedMap).bindPopup('🛰️ CanSAT');
+            cansatPolyline = L.polyline(cansatTrail, {
+              color: '#2563eb', weight: 2, opacity: 0.7
+            }).addTo(sharedMap);
           } else {
             cansatMarker.setLatLng([flat, flon]);
           }
+
           cansatTrail.push([flat, flon]);
           cansatPolyline.setLatLngs(cansatTrail);
-          if (cansatTrail.length === 1) sharedMap.setView([flat, flon], 16);
+
+          if (cansatTrail.length === 1) {
+            sharedMap.setView([flat, flon], 16);
+          }
+
         } else if (prefix === 'rocket') {
           if (!rocketMarker) {
-            rocketMarker = L.marker([flat, flon], { icon: rocketIcon }).addTo(sharedMap).bindPopup('🚀 Rocket');
-            rocketPolyline = L.polyline(rocketTrail, { color: '#dc2626', weight: 2, opacity: 0.7 }).addTo(sharedMap);
+            rocketMarker = L.marker([flat, flon], { icon: rocketIcon })
+              .addTo(sharedMap).bindPopup('🚀 Rocket');
+            rocketPolyline = L.polyline(rocketTrail, {
+              color: '#dc2626', weight: 2, opacity: 0.7
+            }).addTo(sharedMap);
           } else {
             rocketMarker.setLatLng([flat, flon]);
           }
+
           rocketTrail.push([flat, flon]);
           rocketPolyline.setLatLngs(rocketTrail);
-          if (rocketTrail.length === 1 && !cansatTrail.length) sharedMap.setView([flat, flon], 16);
+
+          if (rocketTrail.length === 1 && !cansatTrail.length) {
+            sharedMap.setView([flat, flon], 16);
+          }
         }
       }
 
-      const tSec = (parseFloat(ms) / 1000).toFixed(1);
+      const tSec = (numMs / 1000).toFixed(1);
       altChart.data.labels.push(tSec);
-      altChart.data.datasets[0].data.push(numGpsAlt);
-      altChart.data.datasets[1].data.push(numBaroAlt);
+      altChart.data.datasets[0].data.push(
+        Number.isFinite(numGpsAlt) ? numGpsAlt : 0
+      );
+      altChart.data.datasets[1].data.push(
+        Number.isFinite(numBaroAlt) ? numBaroAlt : 0
+      );
+
       if (altChart.data.labels.length > 100) {
         altChart.data.labels.shift();
         altChart.data.datasets[0].data.shift();
         altChart.data.datasets[1].data.shift();
       }
+
       altChart.update('none');
 
       packetCount++;
